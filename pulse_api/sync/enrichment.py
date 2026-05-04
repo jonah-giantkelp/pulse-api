@@ -152,7 +152,11 @@ Events to geo-locate:
 Return a JSON object with exactly this structure:
 {{
     "geo": [
-        {{"city": "<city name>", "country": "<ISO 3166-1 alpha-2 code e.g. GB, DE, NL>"}}
+        {{
+            "city": "<city name or 'Unknown'>",
+            "country": "<ISO 3166-1 alpha-2 code, or null if unknown>",
+            "country_confidence": "high" | "medium" | "low"
+        }}
     ]
 }}
 
@@ -162,7 +166,9 @@ Rules:
 - Use the most well-known city name (e.g. "London" not "Greater London")
 - If two events share the same date and similar title, they are probably the same event in the same city
 - If you cannot determine the city, use "Unknown"
-- If you cannot determine the country, use null
+- For country: only return a code if you have direct evidence (named city, venue you recognise, or matching reference event). Otherwise return null.
+- country_confidence is "high" only when the country is unambiguous from the venue/city. If you're guessing from weak signals or generic clues, use "medium" or "low".
+- Do NOT default to any particular country when uncertain — return null with low confidence.
 """
 
 
@@ -212,6 +218,7 @@ async def ai_fill_geo(events: list[dict], all_events: list[dict] | None = None):
         raw = json.loads(resp) if isinstance(resp, str) else resp
         geo_list = raw.get("geo", []) if isinstance(raw, dict) else raw
 
+        country_skipped = 0
         for i, geo in enumerate(geo_list):
             if i >= len(events):
                 break
@@ -219,11 +226,20 @@ async def ai_fill_geo(events: list[dict], all_events: list[dict] | None = None):
                 continue
             if geo.get("city"):
                 events[i]["city"] = geo["city"]
-            if geo.get("country"):
-                events[i]["country"] = geo["country"]
+            # Only write country when the model is confident — anything else
+            # historically biased toward GB and polluted the column.
+            country = geo.get("country")
+            confidence = (geo.get("country_confidence") or "").lower()
+            if country and confidence == "high":
+                events[i]["country"] = country
+            elif country:
+                country_skipped += 1
 
         filled = sum(1 for e in events if e.get("city"))
-        logger.info("    🌍 AI geo filled %d/%d events", filled, len(events))
+        logger.info(
+            "    🌍 AI geo filled %d/%d events (skipped %d low-confidence countries)",
+            filled, len(events), country_skipped,
+        )
     except Exception as e:
         logger.warning("    ⚠️  AI geo failed: %s", str(e)[:60])
 

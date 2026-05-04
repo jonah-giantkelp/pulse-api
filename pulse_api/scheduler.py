@@ -57,4 +57,6 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    while True:
+        sleep(60)
+    # run()
