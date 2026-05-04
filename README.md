@@ -108,7 +108,7 @@ Or invoke the pipeline directly in a script:
 
 ```python
 import asyncio
-from pulse_api.orchestrator import run_daily_sync
+from pulse_api.sync import run_daily_sync
 
 asyncio.run(run_daily_sync())
 ```

@@ -1,0 +1,75 @@
+"""Flask application entrypoint.
+
+Routes are defined as blueprints in `pulse_api.routes`. This module wires
+them onto the Flask app, configures logging, and exposes `run()` for the
+`pulse` CLI script (see pyproject.toml).
+"""
+
+import logging
+
+from flask import Flask, request
+from flask_cors import CORS
+
+from pulse_api.routes import (
+    admin_bp,
+    artists_bp,
+    email_prefs_bp,
+    events_bp,
+    social_bp,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-5s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+app = Flask(__name__)
+CORS(app)
+
+logger = logging.getLogger(__name__)
+
+app.register_blueprint(artists_bp)
+app.register_blueprint(events_bp)
+app.register_blueprint(social_bp)
+app.register_blueprint(email_prefs_bp)
+app.register_blueprint(admin_bp)
+
+
+@app.after_request
+def log_response(response):
+    logger.info(
+        "[RESPONSE] %s %s → %d",
+        request.method,
+        request.path,
+        response.status_code,
+    )
+    if response.status_code in (403, 405):
+        logger.warning(
+            "[RESPONSE] Unexpected %d — response body: %s",
+            response.status_code,
+            response.get_data(as_text=True)[:500],
+        )
+    return response
+
+
+def run():
+    import os
+    if os.environ.get("FLASK_ENV") == "development":
+        app.run(host="0.0.0.0", port=3000, debug=True)
+    else:
+        import subprocess
+        import sys
+        workers = os.environ.get("WEB_CONCURRENCY", "4")
+        subprocess.run([
+            sys.executable, "-m", "gunicorn",
+            "pulse_api.app:app",
+            "--bind", "0.0.0.0:3000",
+            "--workers", workers,
+            "--threads", "2",
+            "--timeout", "120",
+        ])
+
+
+if __name__ == "__main__":
+    run()

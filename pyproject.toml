@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "pulse-api"
+version = "0.1.0"
+description = "Track musical artist performances and social activity"
+authors = []
+readme = "README.md"
+packages = [{include = "pulse_api"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+supabase = "^2.0.0"
+spotipy = "^2.23.0"
+httpx = "^0.28.1"
+giantkelp-ai = "^0.1.0"
+flask = "^3.0.0"
+flask-cors = "^5.0.0"
+pydantic = "^2.0.0"
+pydantic-settings = "^2.0.0"
+python-dotenv = "^1.0.0"
+gunicorn = "^25.0.0"
+apscheduler = "^3.10.0"
+
+[tool.poetry.scripts]
+pulse = "pulse_api.app:run"
+pulse-scheduler = "pulse_api.scheduler:run"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
