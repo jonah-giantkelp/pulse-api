@@ -33,22 +33,66 @@ URL_PATTERNS = {
 }
 
 
+# Retry policy: MusicBrainz occasionally times out or returns 503 under load.
+# Retry transient failures with exponential backoff before surfacing a 500.
+_MAX_ATTEMPTS = 3
+_BACKOFF_BASE = 1.0  # seconds; doubles each attempt
+_RETRY_STATUS = {502, 503, 504}
+
+
 async def _rate_limited_get(
     client: httpx.AsyncClient,
     url: str,
     **kwargs,
 ) -> httpx.Response:
-    """GET with rate limiting to respect MusicBrainz 1-req/sec policy."""
+    """GET with rate limiting and retries for transient failures.
+
+    Respects MusicBrainz's 1-req/sec policy via _MIN_INTERVAL. Retries on
+    network timeouts, connection errors, and 5xx responses (502/503/504)
+    with exponential backoff.
+    """
     global _last_request_time
 
-    elapsed = time.monotonic() - _last_request_time
-    if elapsed < _MIN_INTERVAL:
-        await asyncio.sleep(_MIN_INTERVAL - elapsed)
+    last_exc: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        elapsed = time.monotonic() - _last_request_time
+        if elapsed < _MIN_INTERVAL:
+            await asyncio.sleep(_MIN_INTERVAL - elapsed)
 
-    _last_request_time = time.monotonic()
-    resp = await client.get(url, **kwargs)
-    resp.raise_for_status()
-    return resp
+        _last_request_time = time.monotonic()
+        try:
+            resp = await client.get(url, **kwargs)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            if attempt == _MAX_ATTEMPTS:
+                logger.warning(
+                    "MusicBrainz GET %s failed after %d attempts: %s",
+                    url, attempt, exc,
+                )
+                raise
+            backoff = _BACKOFF_BASE * (2 ** (attempt - 1))
+            logger.info(
+                "MusicBrainz GET %s attempt %d/%d failed (%s); retrying in %.1fs",
+                url, attempt, _MAX_ATTEMPTS, exc, backoff,
+            )
+            await asyncio.sleep(backoff)
+            continue
+
+        if resp.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS:
+            backoff = _BACKOFF_BASE * (2 ** (attempt - 1))
+            logger.info(
+                "MusicBrainz GET %s returned %d on attempt %d/%d; retrying in %.1fs",
+                url, resp.status_code, attempt, _MAX_ATTEMPTS, backoff,
+            )
+            await asyncio.sleep(backoff)
+            continue
+
+        resp.raise_for_status()
+        return resp
+
+    # Defensive: loop should always return or raise above.
+    assert last_exc is not None
+    raise last_exc
 
 
 async def search_artists(query: str, limit: int = 10) -> list[dict]:
