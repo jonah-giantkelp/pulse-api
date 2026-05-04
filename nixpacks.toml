@@ -4,5 +4,5 @@ NIXPACKS_POETRY_VERSION = "2.1.1"
 [phases.install]
 cmds = [
   "python -m venv --copies /opt/venv",
-  ". /opt/venv/bin/activate && pip install poetry==2.1.1 && poetry install --without dev --no-interaction --no-ansi"
+  ". /opt/venv/bin/activate && pip install poetry==2.1.1 && poetry install --no-interaction --no-ansi"
 ]
