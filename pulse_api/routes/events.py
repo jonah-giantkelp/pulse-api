@@ -16,6 +16,14 @@ from pulse_api.db import supabase
 events_bp = Blueprint("events", __name__)
 
 
+def _parse_csv(value: str | None) -> list[str] | None:
+    """Parse a comma-separated query param into a list, or None if empty."""
+    if not value:
+        return None
+    items = [v.strip().upper() for v in value.split(",") if v.strip()]
+    return items or None
+
+
 @events_bp.get("/me/events")
 @require_auth
 def list_my_events():
@@ -37,8 +45,10 @@ def list_my_events():
 
     # Location scope toggle: default is to filter by the user's
     # default_cities/default_countries (which default to {'London'} on
-    # signup). Pass ?scope=all to bypass and see every location.
+    # signup). Pass ?scope=all to bypass and see every location, or
+    # ?countries=GB,FR to override with specific country codes.
     scope = request.args.get("scope")
+    countries_override = _parse_csv(request.args.get("countries"))
 
     query = (
         supabase.table("event_with_artist")
@@ -46,7 +56,7 @@ def list_my_events():
         .in_("artist_id", artist_ids)
         .gte("date", "now()")
     )
-    query = apply_user_location_filter(query, scope)
+    query = apply_user_location_filter(query, scope, countries_override)
     events = query.order("date", desc=False).execute()
 
     # Dedupe — the same event can appear for multiple tracked artists
@@ -72,9 +82,10 @@ def list_artist_events(artist_id):
     """List upcoming events for a specific artist via the view.
 
     Defaults to filtering by the user's default_cities/default_countries;
-    pass ?scope=all to see every location for this artist.
+    pass ?scope=all to see every location, or ?countries=GB,FR to override.
     """
     scope = request.args.get("scope")
+    countries_override = _parse_csv(request.args.get("countries"))
 
     query = (
         supabase.table("event_with_artist")
@@ -82,7 +93,7 @@ def list_artist_events(artist_id):
         .eq("artist_id", artist_id)
         .gte("date", "now()")
     )
-    query = apply_user_location_filter(query, scope)
+    query = apply_user_location_filter(query, scope, countries_override)
     events = query.order("date", desc=False).execute()
 
     attach_event_images(events.data)

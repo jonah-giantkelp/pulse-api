@@ -142,19 +142,28 @@ def get_user_location_prefs() -> tuple[list[str], list[str]]:
     )
 
 
-def apply_user_location_filter(query, scope: str | None):
+def apply_user_location_filter(
+    query,
+    scope: str | None,
+    countries_override: list[str] | None = None,
+):
     """Apply the user's default_cities/default_countries filter to `query`.
 
-    The client toggle is binary:
-      * scope == "all"  → no filter (return everything).
-      * otherwise       → filter by the user's prefs (city ∈ defaults
-                          OR country ∈ defaults). If the user has no
-                          prefs at all, return as-is (no filter).
+    The client toggle is:
+      * scope == "all"        → no filter (return everything).
+      * countries_override     → filter by those country codes only,
+                                ignoring the user's stored prefs.
+      * otherwise             → filter by the user's prefs (city ∈ defaults
+                                OR country ∈ defaults). If the user has no
+                                prefs at all, return as-is (no filter).
 
     Mirrors the OR-across-columns logic in email_digest._apply_location_filter.
     """
     if scope == "all":
         return query
+
+    if countries_override:
+        return query.in_("country", countries_override)
 
     cities, countries = get_user_location_prefs()
     if cities and not countries:
