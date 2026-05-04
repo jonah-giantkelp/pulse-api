@@ -55,8 +55,9 @@ def log_response(response):
 
 def run():
     import os
+    port = int(os.environ.get("PORT", "3000"))
     if os.environ.get("FLASK_ENV") == "development":
-        app.run(host="0.0.0.0", port=3000, debug=True)
+        app.run(host="0.0.0.0", port=port, debug=True)
     else:
         import subprocess
         import sys
@@ -64,7 +65,7 @@ def run():
         subprocess.run([
             sys.executable, "-m", "gunicorn",
             "pulse_api.app:app",
-            "--bind", "0.0.0.0:3000",
+            "--bind", f"0.0.0.0:{port}",
             "--workers", workers,
             "--threads", "2",
             "--timeout", "120",
