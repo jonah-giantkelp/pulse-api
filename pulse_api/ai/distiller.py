@@ -233,7 +233,7 @@ async def enrich_dateless_gigs(
         quoted_text = quoted.get("text") or quoted.get("full_text")
         if quoted_text:
             try:
-                resp = agent.smart_completion(
+                resp = agent.fast_completion(
                     user_prompt=ENRICH_QUOTED_PROMPT.format(
                         artist_name=artist_name,
                         event_text=event_text,
@@ -344,7 +344,7 @@ async def web_enrich_event(
     )
 
     # Parse search results with AI
-    resp = agent.smart_completion(
+    resp = agent.fast_completion(
         user_prompt=WEB_ENRICH_PROMPT.format(
             artist_name=artist_name,
             event_name=event_name,
