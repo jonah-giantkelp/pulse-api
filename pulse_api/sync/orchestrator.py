@@ -386,10 +386,10 @@ def upsert_events(events: list[dict]):
 # ─────────────────────────────────────────────
 
 
-async def run_daily_sync():
+async def run_daily_sync(include_social: bool = True):
     logger.info("")
     logger.info("=" * 50)
-    logger.info("🔄 DAILY SYNC")
+    logger.info("🔄 DAILY SYNC%s", "" if include_social else " (events only)")
     logger.info("=" * 50)
 
     tracked = (
@@ -463,13 +463,17 @@ async def run_daily_sync():
             logger.error("  ❌ Event sync failed: %s", err)
             events = []
 
-        try:
-            # Social (with cursor-based fetching)
-            logger.info("  💬 Social:")
-            posts = await sync_social_for_artist(artist)
-        except Exception as e:
-            err = str(e).split("\n")[0][:120]
-            logger.error("  ❌ Social sync failed: %s", err)
+        if include_social:
+            try:
+                # Social (with cursor-based fetching)
+                logger.info("  💬 Social:")
+                posts = await sync_social_for_artist(artist)
+            except Exception as e:
+                err = str(e).split("\n")[0][:120]
+                logger.error("  ❌ Social sync failed: %s", err)
+                posts = []
+        else:
+            logger.info("  💬 Social: skipped (weekly cadence)")
             posts = []
 
         # Upsert — isolate failures so one artist can't nuke the pipeline

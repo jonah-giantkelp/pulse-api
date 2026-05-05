@@ -8,12 +8,15 @@ Entry point: `pulse-scheduler` (see pyproject.toml).
 
 import asyncio
 import logging
+from datetime import datetime
+from time import sleep
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from pulse_api.mailer import send_daily_digests
+from pulse_api.sync import run_daily_sync
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,9 +38,33 @@ def _run_digest() -> None:
         logger.exception("[SCHEDULER] Digest job raised")
 
 
+def _run_sync() -> None:
+    """APScheduler job — nightly sync. Social sources (Instagram/Twitter)
+    only run on Thursdays; other days are events-only."""
+    today = datetime.now(LONDON)
+    is_thursday = today.weekday() == 3  # Mon=0, Thu=3
+    logger.info(
+        "[SCHEDULER] Firing nightly sync (social=%s)", is_thursday,
+    )
+    try:
+        result = asyncio.run(run_daily_sync(include_social=is_thursday))
+        logger.info("[SCHEDULER] Sync finished: %s", result)
+    except Exception:
+        logger.exception("[SCHEDULER] Sync job raised")
+
+
 def run() -> None:
     """Start the blocking scheduler. Blocks forever."""
     scheduler = BlockingScheduler(timezone=LONDON)
+    scheduler.add_job(
+        _run_sync,
+        trigger=CronTrigger(hour=2, minute=0, timezone=LONDON),
+        id="nightly_sync",
+        name="Nightly sync (02:00 Europe/London, social on Thursdays)",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60 * 60,
+    )
     scheduler.add_job(
         _run_digest,
         trigger=CronTrigger(hour=7, minute=30, timezone=LONDON),
@@ -48,7 +75,8 @@ def run() -> None:
         misfire_grace_time=60 * 60,
     )
     logger.info(
-        "[SCHEDULER] Started — daily digest scheduled for 07:30 Europe/London"
+        "[SCHEDULER] Started — nightly sync 02:00 (social Thu only), "
+        "digest 07:30 Europe/London"
     )
     try:
         scheduler.start()
@@ -57,6 +85,4 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    while True:
-        sleep(60)
-    # run()
+    run()
