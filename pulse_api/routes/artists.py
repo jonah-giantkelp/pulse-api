@@ -1,5 +1,7 @@
 """Artist endpoints — search, add, resolve, fetch, list-tracked, untrack."""
 
+import logging
+
 from flask import Blueprint, g, jsonify, request
 
 from pulse_api.routes._helpers import run_async
@@ -16,16 +18,64 @@ from pulse_api.sources.musicbrainz import (
     search_artists as mb_search_artists,
 )
 
+logger = logging.getLogger(__name__)
+
 artists_bp = Blueprint("artists", __name__)
 
 
-@artists_bp.get("/artists/search")
-@require_auth
-def search_artists():
-    """Live search for artists via MusicBrainz.
+def _local_row_to_card(row: dict) -> dict:
+    """Project an `artists` row into the shared search-card shape.
 
-    Returns candidates with name, disambiguation, country, tags, and
-    image URL for the frontend to display as the user types.
+    Mirrors the MusicBrainz shape so the client can merge results from both
+    endpoints by `musicbrainz_id` (or fall back to `artist_id` for local-only
+    rows).
+    """
+    return {
+        "source": "local",
+        "artist_id": row.get("id"),
+        "musicbrainz_id": row.get("musicbrainz_id"),
+        "name": row.get("name") or "",
+        "disambiguation": "",
+        "country": "",
+        "tags": [],
+        "genres": row.get("genres") or [],
+        "image_url": row.get("image_url"),
+    }
+
+
+@artists_bp.get("/artists/search/local")
+@require_auth
+def search_artists_local():
+    """Fast DB-only search of artists already in our system.
+
+    Returns rows in the same shape as /artists/search/musicbrainz so the
+    client can merge results, deduping by musicbrainz_id where present.
+    """
+    q = request.args.get("q", "").strip()
+    if len(q) < 2:
+        return jsonify([])
+
+    limit = min(int(request.args.get("limit", 8)), 20)
+
+    # Case-insensitive prefix-and-substring match on name. Keep it tight —
+    # this endpoint runs on every keystroke.
+    rows = (
+        supabase.table("artists")
+        .select("id, name, musicbrainz_id, image_url, genres")
+        .ilike("name", f"%{q}%")
+        .limit(limit)
+        .execute()
+    )
+    return jsonify([_local_row_to_card(r) for r in rows.data or []])
+
+
+@artists_bp.get("/artists/search/musicbrainz")
+@require_auth
+def search_artists_musicbrainz():
+    """Live search for artists via MusicBrainz, with image enrichment.
+
+    Slower than the local endpoint — clients should fire both in parallel
+    and render local results immediately while MB results stream in.
     """
     q = request.args.get("q", "").strip()
     if len(q) < 2:
@@ -36,7 +86,7 @@ def search_artists():
     candidates = run_async(mb_search_artists(q, limit=limit))
 
     # Enrich top candidates with images (from Spotify via MusicBrainz
-    # relations).  Only fetch details for the top 5 to stay within
+    # relations). Only fetch details for the top 5 to stay within
     # MusicBrainz rate limits.
     async def _enrich():
         for c in candidates[:5]:
@@ -52,7 +102,24 @@ def search_artists():
 
     run_async(_enrich())
 
+    # Tag every result with its origin so the client can merge cleanly.
+    for c in candidates:
+        c["source"] = "musicbrainz"
+
     return jsonify(candidates)
+
+
+@artists_bp.get("/artists/search")
+@require_auth
+def search_artists():
+    """Deprecated: use /artists/search/local + /artists/search/musicbrainz.
+
+    Kept as a back-compat alias that returns MusicBrainz results only,
+    matching the legacy single-endpoint behaviour. iOS clients should
+    migrate to the split endpoints for instant local results.
+    """
+    logger.info("[DEPRECATED] /artists/search hit — client should migrate to split endpoints")
+    return search_artists_musicbrainz()
 
 
 @artists_bp.post("/artists")
