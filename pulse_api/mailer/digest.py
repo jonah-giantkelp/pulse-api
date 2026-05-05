@@ -18,6 +18,34 @@ logger = logging.getLogger(__name__)
 POSTMARK_API_URL = "https://api.postmarkapp.com/email"
 
 
+def _pick_subject(events: list[dict]) -> str:
+    """Build a digest subject that leads with the top tracked artist.
+
+    "Top artist" = the artist appearing in the most events in this digest.
+    Tiebreak: artist whose name comes first alphabetically (deterministic
+    so reruns produce the same subject).
+    """
+    n = len(events)
+
+    # Count appearances of each tracked artist across the digest's events.
+    counts: dict[str, int] = {}
+    for e in events:
+        for a in (e.get("artists") or []):
+            name = (a.get("name") or "").strip()
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+
+    if not counts:
+        # No tracked-artist names attached — fall back to a generic count.
+        return f"{n} new show{'s' if n != 1 else ''} for your artists"
+
+    top_artist = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+    if n == 1:
+        return f"{top_artist} just announced a show"
+    return f"{top_artist} + {n - 1} more new date{'s' if n - 1 != 1 else ''}"
+
+
 async def _send_postmark_email(
     to: str,
     subject: str,
@@ -266,7 +294,7 @@ async def send_daily_digests() -> dict:
             city_display = ", ".join(cities_label) if cities_label else None
             html = build_digest_html(events, email, city_display)
             text = build_digest_text(events)
-            subject = f"Pulse \u00b7 {len(events)} new event{'s' if len(events) != 1 else ''} for your artists"
+            subject = _pick_subject(events)
 
             await _send_postmark_email(
                 to=email,
