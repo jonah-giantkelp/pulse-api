@@ -4,6 +4,7 @@ import logging
 import httpx
 from giantkelp_ai import AIAgent
 
+from pulse_api.ai import metrics
 from pulse_api.config import settings
 from pulse_api.sources.base import EventResult
 
@@ -103,6 +104,11 @@ async def scrape_artist_website(
         content=homepage_content,
     )
     find_response = agent.fast_completion(user_prompt=find_prompt, json_output=True)
+    metrics.record(
+        "tour-find", "fast",
+        input_chars=len(find_prompt),
+        output_chars=metrics.response_chars(find_response),
+    )
     find_result = json.loads(find_response) if isinstance(find_response, str) else find_response
 
     tour_page_url = find_result.get("tour_page_url", website_url)
@@ -125,6 +131,11 @@ async def scrape_artist_website(
         content=tour_content,
     )
     extract_response = agent.fast_completion(user_prompt=extract_prompt, json_output=True)
+    metrics.record(
+        "web-extract", "fast",
+        input_chars=len(extract_prompt),
+        output_chars=metrics.response_chars(extract_response),
+    )
     extract_result = json.loads(extract_response) if isinstance(extract_response, str) else extract_response
 
     events = extract_result.get("events", [])

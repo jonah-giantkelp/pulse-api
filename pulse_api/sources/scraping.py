@@ -11,6 +11,7 @@ import re
 
 import httpx
 
+from pulse_api.ai import metrics
 from pulse_api.config import settings
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,11 @@ async def search_url(
             query=ai_query,
             scope="fast",
             max_results=5,
+        )
+        metrics.record(
+            "url-search", "search",
+            input_chars=0,
+            output_chars=metrics.response_chars(result),
         )
         text = result if isinstance(result, str) else str(result)
         url = _extract_url_from_ai_response(text, site, needle)

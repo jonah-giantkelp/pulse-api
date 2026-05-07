@@ -4,6 +4,8 @@ import logging
 
 from giantkelp_ai import AIAgent
 
+from pulse_api.ai import metrics
+
 logger = logging.getLogger(__name__)
 
 from pulse_api.sources.spotify import SpotifySource
@@ -149,6 +151,11 @@ async def resolve_artist(
     response = agent.smart_completion(
         user_prompt=prompt,
         json_output=True,
+    )
+    metrics.record(
+        "resolution", "smart",
+        input_chars=len(prompt),
+        output_chars=metrics.response_chars(response),
     )
 
     ai_matches = (json.loads(response) if isinstance(response, str) else response)["matches"]
@@ -390,6 +397,11 @@ async def resolve_artist_from_mbid(mbid: str) -> dict:
         response = agent.smart_completion(
             user_prompt=prompt,
             json_output=True,
+        )
+        metrics.record(
+            "resolution", "smart",
+            input_chars=len(prompt),
+            output_chars=metrics.response_chars(response),
         )
 
         parsed = json.loads(response) if isinstance(response, str) else response

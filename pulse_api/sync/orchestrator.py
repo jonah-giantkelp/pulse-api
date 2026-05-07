@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from dateutil import parser as dateparser
 
+from pulse_api.ai import metrics as ai_metrics
 from pulse_api.ai.distiller import distill_posts, enrich_dateless_gigs, web_enrich_event
 from pulse_api.db import supabase
 from pulse_api.sources.bandsintown import BandsintownSource
@@ -392,6 +393,16 @@ async def run_daily_sync(include_social: bool = True):
     logger.info("🔄 DAILY SYNC%s", "" if include_social else " (events only)")
     logger.info("=" * 50)
 
+    # Reset AI metrics + run-level counters
+    ai_metrics.reset()
+    run_stats = {
+        "artists_synced": 0,
+        "artists_skipped": 0,
+        "events_found": 0,
+        "posts_found": 0,
+        "ai_gig_mentions": 0,
+    }
+
     tracked = (
         supabase.table("user_artists")
         .select("artist_id")
@@ -436,6 +447,7 @@ async def run_daily_sync(include_social: bool = True):
                         "⏭️  [%d/%d] %s — synced < %dh ago, skipping",
                         i, len(artists), artist["name"], skip_hours,
                     )
+                    run_stats["artists_skipped"] += 1
                     continue
             except (ValueError, TypeError):
                 pass
@@ -488,6 +500,9 @@ async def run_daily_sync(include_social: bool = True):
             err = str(e).split("\n")[0][:120]
             logger.error("  ❌ Post upsert failed: %s", err)
         logger.info("  💾 Saved: %d events, %d posts", len(events), len(posts))
+        run_stats["artists_synced"] += 1
+        run_stats["events_found"] += len(events)
+        run_stats["posts_found"] += len(posts)
 
         # AI distill → extract events from social posts
         if posts:
@@ -546,6 +561,7 @@ async def run_daily_sync(include_social: bool = True):
                 )
 
                 gig_mentions = summary.get("gig_mentions", [])
+                run_stats["ai_gig_mentions"] += len(gig_mentions)
                 if gig_mentions:
                     # Enrich dateless/partial gigs via images, quoted tweets, and web
                     dateless = [g for g in gig_mentions if not g.get("date")]
@@ -715,3 +731,17 @@ async def run_daily_sync(include_social: bool = True):
     logger.info("=" * 50)
     logger.info("✅ Sync complete!")
     logger.info("=" * 50)
+    logger.info(
+        "🎤 Artists synced: %d   ⏭️  skipped: %d",
+        run_stats["artists_synced"], run_stats["artists_skipped"],
+    )
+    logger.info(
+        "📅 Events found: %d   📱 Posts found: %d   🧠 AI gig mentions: %d",
+        run_stats["events_found"], run_stats["posts_found"],
+        run_stats["ai_gig_mentions"],
+    )
+    for line in ai_metrics.summary_lines():
+        logger.info(line)
+    logger.info("=" * 50)
+
+    return run_stats

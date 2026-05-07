@@ -3,6 +3,7 @@ import logging
 
 from giantkelp_ai import AIAgent
 
+from pulse_api.ai import metrics
 from pulse_api.db import supabase
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,11 @@ async def distill_posts(
         user_prompt=prompt,
         json_output=True,
     )
+    metrics.record(
+        "distill", "smart",
+        input_chars=len(prompt),
+        output_chars=metrics.response_chars(response),
+    )
 
     result = json.loads(response) if isinstance(response, str) else response
     gigs = result.get("gig_mentions", [])
@@ -233,13 +239,19 @@ async def enrich_dateless_gigs(
         quoted_text = quoted.get("text") or quoted.get("full_text")
         if quoted_text:
             try:
+                quoted_prompt = ENRICH_QUOTED_PROMPT.format(
+                    artist_name=artist_name,
+                    event_text=event_text,
+                    quoted_text=quoted_text,
+                )
                 resp = agent.fast_completion(
-                    user_prompt=ENRICH_QUOTED_PROMPT.format(
-                        artist_name=artist_name,
-                        event_text=event_text,
-                        quoted_text=quoted_text,
-                    ),
+                    user_prompt=quoted_prompt,
                     json_output=True,
+                )
+                metrics.record(
+                    "quoted-enrich", "fast",
+                    input_chars=len(quoted_prompt),
+                    output_chars=metrics.response_chars(resp),
                 )
                 enriched = json.loads(resp) if isinstance(resp, str) else resp
                 if enriched.get("date"):
@@ -264,14 +276,20 @@ async def enrich_dateless_gigs(
 
         if media_url:
             try:
+                image_prompt = ENRICH_IMAGE_PROMPT.format(
+                    artist_name=artist_name,
+                    event_text=event_text,
+                )
                 resp = agent.image_completion(
-                    user_prompt=ENRICH_IMAGE_PROMPT.format(
-                        artist_name=artist_name,
-                        event_text=event_text,
-                    ),
+                    user_prompt=image_prompt,
                     image=media_url,
                     file_path=False,
                     json_output=True,
+                )
+                metrics.record(
+                    "image-enrich", "image",
+                    input_chars=len(image_prompt),
+                    output_chars=metrics.response_chars(resp),
                 )
                 enriched = json.loads(resp) if isinstance(resp, str) else resp
                 if enriched.get("date"):
@@ -342,19 +360,30 @@ async def web_enrich_event(
         max_results=5,
         search_context_size="medium",
     )
+    metrics.record(
+        "web-search-enrich", "search",
+        input_chars=0,
+        output_chars=metrics.response_chars(search_results),
+    )
 
     # Parse search results with AI
+    web_enrich_prompt = WEB_ENRICH_PROMPT.format(
+        artist_name=artist_name,
+        event_name=event_name,
+        venue_name=venue or "unknown",
+        city=city or "unknown",
+        date=date or "unknown",
+        date_precision=date_precision,
+        search_results=search_results,
+    )
     resp = agent.fast_completion(
-        user_prompt=WEB_ENRICH_PROMPT.format(
-            artist_name=artist_name,
-            event_name=event_name,
-            venue_name=venue or "unknown",
-            city=city or "unknown",
-            date=date or "unknown",
-            date_precision=date_precision,
-            search_results=search_results,
-        ),
+        user_prompt=web_enrich_prompt,
         json_output=True,
+    )
+    metrics.record(
+        "web-enrich", "fast",
+        input_chars=len(web_enrich_prompt),
+        output_chars=metrics.response_chars(resp),
     )
 
     enriched = json.loads(resp) if isinstance(resp, str) else resp

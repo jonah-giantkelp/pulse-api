@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from dateutil import parser as dateparser
 
+from pulse_api.ai import metrics
 from pulse_api.sync.fingerprint import date_bucket
 
 logger = logging.getLogger(__name__)
@@ -207,13 +208,19 @@ async def ai_fill_geo(events: list[dict], all_events: list[dict] | None = None):
         from giantkelp_ai import AIAgent
 
         agent = AIAgent(provider="openai")
+        geo_prompt = _GEO_PROMPT.format(
+            events="\n".join(lines),
+            references=references,
+            count=len(events),
+        )
         resp = agent.fast_completion(
-            user_prompt=_GEO_PROMPT.format(
-                events="\n".join(lines),
-                references=references,
-                count=len(events),
-            ),
+            user_prompt=geo_prompt,
             json_output=True,
+        )
+        metrics.record(
+            "geo-fill", "fast",
+            input_chars=len(geo_prompt),
+            output_chars=metrics.response_chars(resp),
         )
         raw = json.loads(resp) if isinstance(resp, str) else resp
         geo_list = raw.get("geo", []) if isinstance(raw, dict) else raw
@@ -322,12 +329,18 @@ def ai_clean_titles_and_cities(events: list[dict]):
         from giantkelp_ai import AIAgent
 
         agent = AIAgent(provider="openai")
+        clean_prompt = _CLEAN_PROMPT.format(
+            events="\n".join(lines),
+            count=len(indices_to_clean),
+        )
         resp = agent.fast_completion(
-            user_prompt=_CLEAN_PROMPT.format(
-                events="\n".join(lines),
-                count=len(indices_to_clean),
-            ),
+            user_prompt=clean_prompt,
             json_output=True,
+        )
+        metrics.record(
+            "title-clean", "fast",
+            input_chars=len(clean_prompt),
+            output_chars=metrics.response_chars(resp),
         )
         raw = json.loads(resp) if isinstance(resp, str) else resp
         cleaned = raw.get("cleaned", []) if isinstance(raw, dict) else raw
@@ -409,9 +422,15 @@ def ai_merge_decision(
         from giantkelp_ai import AIAgent
 
         agent = AIAgent(provider="openai")
+        merge_prompt = _MERGE_PROMPT.format(groups="\n".join(group_lines))
         resp = agent.fast_completion(
-            user_prompt=_MERGE_PROMPT.format(groups="\n".join(group_lines)),
+            user_prompt=merge_prompt,
             json_output=True,
+        )
+        metrics.record(
+            "merge-adjudicate", "fast",
+            input_chars=len(merge_prompt),
+            output_chars=metrics.response_chars(resp),
         )
         raw = json.loads(resp) if isinstance(resp, str) else resp
         ai_groups = raw.get("groups", []) if isinstance(raw, dict) else raw
