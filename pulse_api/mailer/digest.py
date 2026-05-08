@@ -131,41 +131,7 @@ def _get_new_events_for_user(
     if not artist_ids:
         return [], cities
 
-    # Get all event links for the user's artists
-    links = (
-        supabase.table("event_artists")
-        .select("event_id, artist_id, billing, created_at, artists(name, image_url)")
-        .in_("artist_id", artist_ids)
-        .execute()
-    )
-    if not links.data:
-        return [], cities
-
     since_iso = since.isoformat()
-
-    # Build event → artists map, and track which events have new artist
-    # announcements (event_artists.created_at >= since)
-    event_artist_map: dict[str, list] = {}
-    event_ids_new_link: set[str] = set()
-    all_event_ids: set[str] = set()
-    for link in links.data:
-        eid = link["event_id"]
-        all_event_ids.add(eid)
-        event_artist_map.setdefault(eid, []).append({
-            "artist_id": link["artist_id"],
-            "billing": link.get("billing"),
-            **(link.get("artists") or {}),
-        })
-        # Track events where a new artist was linked since last digest
-        if link.get("created_at", "") >= since_iso:
-            event_ids_new_link.add(eid)
-
-    # Fetch upcoming events (optionally filtered by location) that are either:
-    # 1. Newly created events (events.created_at >= since), OR
-    # 2. Existing events with a new artist announcement (event_artists.created_at >= since)
-    #
-    # Supabase doesn't support OR across tables in a single query,
-    # so we fetch both sets and merge.
 
     def _apply_location_filter(query):
         """Apply city/country filters if the user has location preferences."""
@@ -182,43 +148,79 @@ def _get_new_events_for_user(
             )
         return query
 
-    # Set 1: new events
+    # Narrow by date first (small result set), then intersect with the user's
+    # tracked artists via event_artists. Filtering events by a huge IN list of
+    # artist-derived event IDs blows up the request URL and trips PostgREST's
+    # 400 "JSON could not be generated" / "Bad Request" responses.
+
+    # Set 1: newly created upcoming events.
     q1 = (
         supabase.table("events")
         .select("*")
-        .in_("id", list(all_event_ids))
         .gte("date", "now()")
         .gte("created_at", since_iso)
     )
     q1 = _apply_location_filter(q1)
-    new_events = q1.order("date", desc=False).execute()
+    new_events_rows = q1.order("date", desc=False).execute().data
 
-    # Set 2: existing events with new artist links
-    new_announcement_events = []
-    # Only query if there are event IDs with new links that aren't already
-    # covered by new events
-    new_event_ids = {e["id"] for e in new_events.data}
-    extra_ids = event_ids_new_link - new_event_ids
-    if extra_ids:
+    # Set 2: existing upcoming events that got a new artist link since `since`.
+    # Narrow event_artists by created_at + tracked artists first (small set),
+    # then look the events up by ID.
+    new_link_rows = (
+        supabase.table("event_artists")
+        .select("event_id")
+        .in_("artist_id", artist_ids)
+        .gte("created_at", since_iso)
+        .execute()
+        .data
+    )
+    new_link_event_ids = {r["event_id"] for r in new_link_rows}
+    new_link_event_ids -= {e["id"] for e in new_events_rows}
+
+    new_announcement_events: list[dict] = []
+    if new_link_event_ids:
         q2 = (
             supabase.table("events")
             .select("*")
-            .in_("id", list(extra_ids))
+            .in_("id", list(new_link_event_ids))
             .gte("date", "now()")
         )
         q2 = _apply_location_filter(q2)
-        extra = q2.order("date", desc=False).execute()
-        new_announcement_events = extra.data
+        new_announcement_events = q2.order("date", desc=False).execute().data
 
     # Merge and deduplicate
+    candidates: list[dict] = []
     seen_ids: set[str] = set()
-    all_events: list[dict] = []
-    for event in new_events.data + new_announcement_events:
+    for event in new_events_rows + new_announcement_events:
         if event["id"] not in seen_ids:
             seen_ids.add(event["id"])
-            all_events.append(event)
+            candidates.append(event)
 
-    # Sort by date
+    if not candidates:
+        return [], cities
+
+    # Intersect with event_artists to confirm each event has at least one
+    # tracked artist and to build the per-event artist display map.
+    candidate_ids = [e["id"] for e in candidates]
+    links = (
+        supabase.table("event_artists")
+        .select("event_id, artist_id, billing, artists(name, image_url)")
+        .in_("event_id", candidate_ids)
+        .in_("artist_id", artist_ids)
+        .execute()
+        .data
+    )
+
+    event_artist_map: dict[str, list] = {}
+    for link in links:
+        eid = link["event_id"]
+        event_artist_map.setdefault(eid, []).append({
+            "artist_id": link["artist_id"],
+            "billing": link.get("billing"),
+            **(link.get("artists") or {}),
+        })
+
+    all_events = [e for e in candidates if e["id"] in event_artist_map]
     all_events.sort(key=lambda e: e.get("date", ""))
 
     # Fetch ticket URLs from external IDs (some sources store better URLs there)
