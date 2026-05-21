@@ -3,7 +3,7 @@
 Runs APScheduler in a single dedicated process — separate from the
 gunicorn web workers — so the daily digest fires exactly once per day.
 
-Entry point: `pulse-scheduler` (see pyproject.toml).
+Entry point: `pulse-scheduler` (see pyproject.toml). Again.
 """
 
 import asyncio
