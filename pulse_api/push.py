@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "")
 APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "")
 APNS_PRIVATE_KEY = os.environ.get("APNS_PRIVATE_KEY", "").replace("\\n", "\n")
-APNS_BUNDLE_ID = os.environ.get("APNS_BUNDLE_ID", "xyz.giantkelp.pulse")
+APNS_BUNDLE_ID = os.environ.get("APNS_BUNDLE_ID", "giantkelp.pulse-app")
 APNS_USE_SANDBOX = os.environ.get("APNS_USE_SANDBOX", "true").lower() == "true"
 
 _jwt_cache: tuple[str, float] | None = None

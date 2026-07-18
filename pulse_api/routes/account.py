@@ -4,12 +4,20 @@ import logging
 
 from flask import Blueprint, g, jsonify, request
 
-from pulse_api.auth import require_auth
+from pulse_api.auth import is_approved, require_auth
 from pulse_api.db import supabase
 
 logger = logging.getLogger(__name__)
 
 account_bp = Blueprint("account", __name__)
+
+
+@account_bp.get("/me/access")
+@require_auth
+def access_status():
+    """Whether this account has been approved. Exempt from the approval
+    gate itself so the app can poll it from the pending screen."""
+    return jsonify({"approved": is_approved(g.user_id, g.user_email)})
 
 
 @account_bp.post("/me/push-token")

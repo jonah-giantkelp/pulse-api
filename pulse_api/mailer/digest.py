@@ -316,9 +316,8 @@ async def send_daily_digests() -> dict:
             if user.get("push_enabled"):
                 pushed = await send_push_to_user(
                     user_id,
-                    "PULSE",
-                    f"{len(events)} new event{'s' if len(events) != 1 else ''} "
-                    "for your artists",
+                    "PULSE GK",
+                    _pick_subject(events),
                 )
                 if pushed:
                     logger.info("[DIGEST] Pushed to %d device(s) for %s", pushed, user_id)
