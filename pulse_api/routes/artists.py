@@ -17,6 +17,7 @@ from pulse_api.sources.musicbrainz import (
     get_artist_image,
     search_artists as mb_search_artists,
 )
+from pulse_api.sync.orchestrator import sync_events_for_artist, upsert_events
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,23 @@ def add_artist():
         {"user_id": g.user_id, "artist_id": result["artist_id"], "city": city}
     ).execute()
 
+    # Initial event sync so the artist arrives with gigs (and an accurate
+    # active pill) instead of waiting for the nightly sync. Best-effort —
+    # a source failure shouldn't fail the add.
+    try:
+        artist_row = (
+            supabase.table("artists")
+            .select("*")
+            .eq("id", result["artist_id"])
+            .execute()
+        ).data[0]
+        events = run_async(sync_events_for_artist(artist_row))
+        upsert_events(events)
+        result["initial_events"] = len(events)
+        logger.info("Initial sync for %s: %d event(s)", artist_row["name"], len(events))
+    except Exception:
+        logger.exception("Initial event sync failed for %s", result["artist_id"])
+
     return jsonify(result), 201
 
 
@@ -223,13 +241,33 @@ def get_resolutions(artist_id):
 @artists_bp.get("/me/artists")
 @require_auth
 def list_my_artists():
-    """List artists the current user is tracking."""
+    """List artists the current user is tracking.
+
+    Each row carries `has_upcoming` — whether the artist has at least one
+    future event — which drives the app's ACTIVE/INACTIVE pill (the
+    artists.active column is a sync kill-switch, not a liveness signal).
+    """
     subs = (
         supabase.table("user_artists")
         .select("artist_id, city, notify, created_at, artists(*)")
         .eq("user_id", g.user_id)
         .execute()
     )
+
+    artist_ids = [s["artist_id"] for s in subs.data]
+    upcoming: set[str] = set()
+    if artist_ids:
+        rows = (
+            supabase.table("event_artists")
+            .select("artist_id, events!inner(date)")
+            .in_("artist_id", artist_ids)
+            .gte("events.date", "now()")
+            .execute()
+        )
+        upcoming = {r["artist_id"] for r in rows.data}
+
+    for s in subs.data:
+        s["has_upcoming"] = s["artist_id"] in upcoming
     return jsonify(subs.data)
 
 

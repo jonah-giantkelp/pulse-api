@@ -2,16 +2,21 @@
 Backfill script: subscribe a user to ALL artists in the database.
 
 Usage:
-    python backfill_user_artists.py
+    python backfill_user_artists.py <user-uuid>
 """
+
+import sys
 
 from pulse_api.db import supabase
 
-USER_ID = "85f54f96-1004-4bfd-bc93-ac3845dfb8f5"
 DEFAULT_CITY = None
 
 
 def main():
+    if len(sys.argv) != 2:
+        sys.exit("Usage: python backfill_user_artists.py <user-uuid>")
+    USER_ID = sys.argv[1]
+
     # 1. Fetch all artist IDs
     artists = (
         supabase.table("artists")

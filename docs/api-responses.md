@@ -654,3 +654,57 @@ All errors follow the same shape:
 | 401 | Missing, invalid, or expired token |
 | 404 | Resource not found |
 | 500 | Server error |
+
+---
+
+## `GET /me/favourites`
+
+The user's favourited events, soonest first. Same enriched event shape as
+`/me/events` (images, ticket_links, detail, social_post). Includes past events
+and ignores location filters. Returns `[]` if none.
+
+## `POST /me/favourites/<event_id>`
+
+Favourite an event. Idempotent. **200:** `{ "status": "favourited" }`
+
+## `DELETE /me/favourites/<event_id>`
+
+Unfavourite an event. Idempotent. **200:** `{ "status": "unfavourited" }`
+
+---
+
+## `/me/artists` addition
+
+Each row now includes `has_upcoming` (`boolean`) — whether the artist has at
+least one future event. Clients should use this for the ACTIVE/INACTIVE pill;
+`artists.active` is a sync kill-switch, not a liveness signal.
+
+---
+
+## Notification & account endpoints (migration 014)
+
+`user_email_preferences` now carries `recipients text[]` (newsletter goes to
+every address) and `push_enabled boolean`. `email` is kept in step with
+`recipients[0]` for legacy readers. `PUT /me/email-preferences` accepts
+`recipients` and `push_enabled`; the first-setup email requirement is gone.
+
+## `POST /me/push-token`
+
+Body: `{ "device_token": "<hex>", "platform": "ios" }`. Idempotent upsert.
+**200:** `{ "status": "registered" }`
+
+## `DELETE /me/push-token/<token>`
+
+**200:** `{ "status": "removed" }`
+
+## `DELETE /me/account`
+
+Deletes all the user's rows (subscriptions, favourites, prefs, push tokens,
+digest log) then the auth user via the admin API. **200:** `{ "status": "deleted" }`
+
+## Push sending
+
+`pulse_api/push.py` sends APNs alerts (HTTP/2, p8 token auth) during the daily
+digest run to users with `push_enabled`. Configure via `APNS_KEY_ID`,
+`APNS_TEAM_ID`, `APNS_PRIVATE_KEY` (p8 contents), `APNS_BUNDLE_ID`,
+`APNS_USE_SANDBOX`. Unconfigured → logged and skipped.

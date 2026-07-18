@@ -417,3 +417,33 @@ create or replace view event_with_artist as
     join event_artists ea on ea.event_id = e.id
     join artists a        on a.id        = ea.artist_id
     group by e.id;
+
+-- User favourite events
+create table if not exists user_event_favourites (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    event_id uuid not null references events(id) on delete cascade,
+    created_at timestamptz not null default now(),
+    unique (user_id, event_id)
+);
+
+create index if not exists idx_user_event_favourites_user
+    on user_event_favourites(user_id);
+
+alter table user_event_favourites enable row level security;
+
+-- Newsletter recipients + push preference (migration 014)
+-- recipients text[] and push_enabled boolean live on user_email_preferences
+
+create table if not exists push_tokens (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    device_token text not null,
+    platform text not null default 'ios',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (user_id, device_token)
+);
+
+create index if not exists idx_push_tokens_user on push_tokens(user_id);
+alter table push_tokens enable row level security;

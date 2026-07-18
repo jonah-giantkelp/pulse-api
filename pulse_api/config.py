@@ -1,8 +1,14 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+# pydantic-settings reads .env into the Settings object only — libraries that
+# read os.environ directly (giantkelp_ai needs OPENAI_API_KEY) miss it, so
+# export the file into the process environment too.
+load_dotenv(ENV_FILE)
 
 
 class Settings(BaseSettings):

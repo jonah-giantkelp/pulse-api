@@ -12,6 +12,7 @@ import httpx
 from pulse_api.config import settings
 from pulse_api.db import supabase
 from pulse_api.mailer.template import build_digest_html, build_digest_text
+from pulse_api.push import send_push_to_user
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +76,12 @@ async def _send_postmark_email(
 
 
 def _get_users_with_digest_enabled() -> list[dict]:
-    """Get all users who have digest enabled with their email and location prefs."""
+    """Users with the newsletter and/or push notifications enabled."""
     result = (
         supabase.table("user_email_preferences")
-        .select("user_id, email, default_cities, default_countries")
-        .eq("digest_enabled", True)
+        .select("user_id, email, recipients, digest_enabled, push_enabled, "
+                "default_cities, default_countries")
+        .or_("digest_enabled.eq.true,push_enabled.eq.true")
         .execute()
     )
     return result.data
@@ -271,7 +273,9 @@ async def send_daily_digests() -> dict:
 
     for user in users:
         user_id = user["user_id"]
-        email = user["email"]
+        recipients = user.get("recipients") or (
+            [user["email"]] if user.get("email") else []
+        )
 
         try:
             since = _get_last_digest_time(user_id)
@@ -284,7 +288,7 @@ async def send_daily_digests() -> dict:
 
             logger.info(
                 "[DIGEST] User %s (%s): %d new events since %s",
-                user_id, email, len(events), since.isoformat(),
+                user_id, recipients, len(events), since.isoformat(),
             )
 
             # Only send if there are new events
@@ -292,27 +296,39 @@ async def send_daily_digests() -> dict:
                 results["users_processed"] += 1
                 continue
 
-            # Build a display label from the user's tracked locations
-            city_display = ", ".join(cities_label) if cities_label else None
-            html = build_digest_html(events, email, city_display)
-            text = build_digest_text(events)
-            subject = _pick_subject(events)
+            if user.get("digest_enabled") and recipients:
+                # Build a display label from the user's tracked locations
+                city_display = ", ".join(cities_label) if cities_label else None
+                text = build_digest_text(events)
+                subject = _pick_subject(events)
 
-            await _send_postmark_email(
-                to=email,
-                subject=subject,
-                html_body=html,
-                text_body=text,
-            )
+                for recipient in recipients:
+                    html = build_digest_html(events, recipient, city_display)
+                    await _send_postmark_email(
+                        to=recipient,
+                        subject=subject,
+                        html_body=html,
+                        text_body=text,
+                    )
+                    results["emails_sent"] += 1
+                    logger.info("[DIGEST] Sent to %s (%d events)", recipient, len(events))
+
+            if user.get("push_enabled"):
+                pushed = await send_push_to_user(
+                    user_id,
+                    "PULSE",
+                    f"{len(events)} new event{'s' if len(events) != 1 else ''} "
+                    "for your artists",
+                )
+                if pushed:
+                    logger.info("[DIGEST] Pushed to %d device(s) for %s", pushed, user_id)
 
             _log_digest_sent(user_id, len(events))
-            results["emails_sent"] += 1
-            logger.info("[DIGEST] Sent to %s (%d events)", email, len(events))
 
         except Exception as e:
             logger.error(
-                "[DIGEST] Failed for user %s (%s): %s",
-                user_id, email, str(e),
+                "[DIGEST] Failed for user %s: %s",
+                user_id, str(e),
             )
             results["errors"].append({
                 "user_id": user_id,

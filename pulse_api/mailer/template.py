@@ -2,7 +2,7 @@
 
 Matches the app's brand identity:
 - Dark background (#0D0D0D)
-- Lime/chartreuse accent (#C8FF00)
+- Lime/chartreuse accent (#A9D65C)
 - Monospace typography (Courier New fallback, SF Mono if available)
 - Dark card style with subtle borders (#2A2A2A)
 """
@@ -96,7 +96,7 @@ def _build_event_card(event: dict) -> str:
             f'<a href="{ticket_url}" target="_blank" '
             f'class="pulse-cta" '
             f'style="display:inline-block;margin-top:12px;'
-            f'padding:8px 20px;background-color:#C8FF00;'
+            f'padding:8px 20px;background-color:#A9D65C;'
             f'color:#0D0D0D;text-decoration:none;'
             f'font-family:\'SF Mono\',\'Courier New\',monospace;'
             f'font-size:12px;font-weight:bold;border-radius:4px;'
@@ -117,8 +117,8 @@ def _build_event_card(event: dict) -> str:
               </td>
               <td align="right" style="vertical-align:middle;white-space:nowrap;">
                 <span class="pulse-date" style="display:inline-block;padding:4px 12px;
-                             border:1px solid #C8FF00;border-radius:4px;
-                             color:#C8FF00;font-size:11px;
+                             border:1px solid #A9D65C;border-radius:4px;
+                             color:#A9D65C;font-size:11px;
                              font-family:'SF Mono','Courier New',monospace;
                              letter-spacing:1px;white-space:nowrap;">
                   {date_badge}
@@ -176,7 +176,7 @@ def build_digest_html(events: list[dict], user_email: str, city: str | None = No
         group = events_by_date[date_key]
         date_display = group[0]["_date_display"]
         events_html += f"""
-        <div style="margin-top:24px;margin-bottom:8px;color:#C8FF00;
+        <div style="margin-top:24px;margin-bottom:8px;color:#A9D65C;
                     font-size:12px;font-family:'SF Mono','Courier New',monospace;
                     letter-spacing:2px;">
           {date_display}
@@ -261,7 +261,7 @@ def build_digest_html(events: list[dict], user_email: str, city: str | None = No
           <!-- Header -->
           <tr>
             <td style="padding:32px 24px 12px;text-align:center;">
-              <div style="color:#C8FF00;font-size:28px;
+              <div style="color:#A9D65C;font-size:28px;
                           font-family:'SF Mono','Courier New',monospace;
                           font-weight:bold;letter-spacing:8px;">
                 P U L S E
@@ -290,7 +290,7 @@ def build_digest_html(events: list[dict], user_email: str, city: str | None = No
             <td style="padding:16px 24px 8px;">
               <div style="color:#AAAAAA;font-size:13px;
                           font-family:'SF Mono','Courier New',monospace;">
-                <span style="color:#C8FF00;font-weight:bold;">
+                <span style="color:#A9D65C;font-weight:bold;">
                   {event_count}</span> new event{"s" if event_count != 1 else ""}
                 discovered for your artists
               </div>

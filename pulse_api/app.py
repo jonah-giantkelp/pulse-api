@@ -11,10 +11,12 @@ from flask import Flask, request
 from flask_cors import CORS
 
 from pulse_api.routes import (
+    account_bp,
     admin_bp,
     artists_bp,
     email_prefs_bp,
     events_bp,
+    favourites_bp,
     social_bp,
 )
 
@@ -29,8 +31,10 @@ CORS(app)
 
 logger = logging.getLogger(__name__)
 
+app.register_blueprint(account_bp)
 app.register_blueprint(artists_bp)
 app.register_blueprint(events_bp)
+app.register_blueprint(favourites_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(email_prefs_bp)
 app.register_blueprint(admin_bp)

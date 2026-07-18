@@ -24,7 +24,9 @@ def get_email_preferences():
         # was null. Surface a sensible London-default shape regardless.
         return jsonify({
             "email": None,
+            "recipients": [],
             "digest_enabled": False,
+            "push_enabled": False,
             "default_cities": ["London"],
             "default_countries": [],
         })
@@ -40,45 +42,45 @@ def update_email_preferences():
     """
     body = request.get_json()
     email = body.get("email")
+    recipients = body.get("recipients")
     digest_enabled = body.get("digest_enabled")
+    push_enabled = body.get("push_enabled")
     default_cities = body.get("default_cities")
     default_countries = body.get("default_countries")
 
-    if all(v is None for v in (email, digest_enabled, default_cities, default_countries)):
+    fields = (email, recipients, digest_enabled, push_enabled, default_cities, default_countries)
+    if all(v is None for v in fields):
         return jsonify({"error": "at least one field is required"}), 400
 
-    # Build the upsert payload
-    payload = {"user_id": g.user_id}
-    if email is not None:
-        payload["email"] = email
-    if digest_enabled is not None:
-        payload["digest_enabled"] = digest_enabled
-    if default_cities is not None:
-        payload["default_cities"] = default_cities
-    if default_countries is not None:
-        payload["default_countries"] = [c.upper() for c in default_countries]
+    if recipients is not None and len(recipients) > 5:
+        return jsonify({"error": "maximum 5 recipients"}), 400
 
-    # Check if record exists
+    update_data = {}
+    if recipients is not None:
+        update_data["recipients"] = recipients
+        # Keep the legacy single-email column in step for older readers
+        update_data["email"] = recipients[0] if recipients else None
+    elif email is not None:
+        update_data["email"] = email
+        update_data["recipients"] = [email] if email else []
+    if digest_enabled is not None:
+        update_data["digest_enabled"] = digest_enabled
+    if push_enabled is not None:
+        update_data["push_enabled"] = push_enabled
+    if default_cities is not None:
+        update_data["default_cities"] = default_cities
+    if default_countries is not None:
+        update_data["default_countries"] = [c.upper() for c in default_countries]
+
     existing = (
         supabase.table("user_email_preferences")
-        .select("id, email, digest_enabled")
+        .select("id")
         .eq("user_id", g.user_id)
         .execute()
     )
 
     if existing.data:
-        # Update existing record
-        update_data = {}
-        if email is not None:
-            update_data["email"] = email
-        if digest_enabled is not None:
-            update_data["digest_enabled"] = digest_enabled
-        if default_cities is not None:
-            update_data["default_cities"] = default_cities
-        if default_countries is not None:
-            update_data["default_countries"] = [c.upper() for c in default_countries]
         update_data["updated_at"] = "now()"
-
         result = (
             supabase.table("user_email_preferences")
             .update(update_data)
@@ -86,21 +88,13 @@ def update_email_preferences():
             .execute()
         )
     else:
-        # Insert new — email is required for first setup
-        if not email:
-            return jsonify({
-                "error": "email is required when setting up digest for the first time"
-            }), 400
-        if digest_enabled is None:
-            payload["digest_enabled"] = True
-
         result = (
             supabase.table("user_email_preferences")
-            .insert(payload)
+            .insert({"user_id": g.user_id, **update_data})
             .execute()
         )
 
-    return jsonify(result.data[0] if result.data else payload)
+    return jsonify(result.data[0] if result.data else update_data)
 
 
 @email_prefs_bp.delete("/me/email-preferences")
