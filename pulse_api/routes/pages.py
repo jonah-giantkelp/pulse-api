@@ -62,6 +62,23 @@ de-duplicated into one clean feed, with an optional daily email digest.</p>
     )
 
 
+@pages_bp.get("/confirmed")
+def confirmed():
+    """Where Supabase sends users after they click the email-confirmation
+    link (Auth → URL Configuration → Site URL points here)."""
+    return _render(
+        "Email Confirmed",
+        """
+<h1>You're confirmed</h1>
+<p class="tagline">Pulse GK</p>
+<p>Your email address has been verified. Head back to the Pulse app on your
+phone and sign in.</p>
+<p>Note: new accounts are approved manually, so if the app says your account
+is awaiting approval, hang tight — you'll get access shortly.</p>
+""",
+    )
+
+
 @pages_bp.get("/privacy")
 def privacy():
     return _render(
