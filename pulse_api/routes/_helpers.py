@@ -5,6 +5,7 @@ helpers stay in their own route module.
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import g
 
@@ -337,6 +338,30 @@ def enrich_events(events: list[dict]) -> None:
 
         # Drop raw_data from the response — it's bulky and internal
         event.pop("raw_data", None)
+
+
+def attach_extras(events: list[dict]) -> None:
+    """Run all event enrichments, with the independent attach_* queries in
+    parallel threads (each writes its own keys onto the event dicts).
+    enrich_events runs after — it reads the lineup attach_lineup adds.
+
+    Keeping the response fast matters beyond UX: the iOS app's pull-to-refresh
+    task gets torn down by SwiftUI if the request is still in flight when the
+    view updates, surfacing a spurious "cancelled" error.
+    """
+    if not events:
+        return
+    attachers = (
+        attach_event_images,
+        attach_ticket_links,
+        attach_lineup,
+        attach_social_posts,
+    )
+    with ThreadPoolExecutor(max_workers=len(attachers)) as pool:
+        futures = [pool.submit(fn, events) for fn in attachers]
+        for future in futures:
+            future.result()
+    enrich_events(events)
 
 
 def attach_event_images(events: list[dict]) -> None:

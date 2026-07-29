@@ -4,11 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from pulse_api.routes._helpers import (
     apply_user_location_filter,
-    attach_event_images,
-    attach_lineup,
-    attach_social_posts,
-    attach_ticket_links,
-    enrich_events,
+    attach_extras,
 )
 from pulse_api.auth import require_auth
 from pulse_api.db import supabase
@@ -67,11 +63,7 @@ def list_my_events():
             seen.add(event["id"])
             unique.append(event)
 
-    attach_event_images(unique)
-    attach_ticket_links(unique)
-    attach_lineup(unique)
-    attach_social_posts(unique)
-    enrich_events(unique)
+    attach_extras(unique)
 
     return jsonify(unique)
 
@@ -96,10 +88,6 @@ def list_artist_events(artist_id):
     query = apply_user_location_filter(query, scope, countries_override)
     events = query.order("date", desc=False).execute()
 
-    attach_event_images(events.data)
-    attach_ticket_links(events.data)
-    attach_lineup(events.data)
-    attach_social_posts(events.data)
-    enrich_events(events.data)
+    attach_extras(events.data)
 
     return jsonify(events.data)

@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 
 artists_bp = Blueprint("artists", __name__)
 
+# Hard cap on MusicBrainz search results — each candidate can cost an extra
+# rate-limited (~1.1s) detail fetch, so this bounds worst-case latency.
+MB_SEARCH_LIMIT = 3
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE/ILIKE wildcards so user input matches literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 
 def _local_row_to_card(row: dict) -> dict:
     """Project an `artists` row into the shared search-card shape.
@@ -37,9 +46,12 @@ def _local_row_to_card(row: dict) -> dict:
         "musicbrainz_id": row.get("musicbrainz_id"),
         "name": row.get("name") or "",
         "disambiguation": "",
+        "type": "",
         "country": "",
+        "score": 100,
         "tags": [],
         "genres": row.get("genres") or [],
+        "life_span": {},
         "image_url": row.get("image_url"),
     }
 
@@ -75,22 +87,54 @@ def search_artists_local():
 def search_artists_musicbrainz():
     """Live search for artists via MusicBrainz, with image enrichment.
 
-    Slower than the local endpoint — clients should fire both in parallel
-    and render local results immediately while MB results stream in.
+    Exact (case-insensitive) name matches from our own DB are returned
+    first, with MusicBrainz results appended after (deduped by
+    musicbrainz_id). Slower than the local endpoint — clients should fire
+    both in parallel and render local results immediately while MB results
+    stream in.
     """
     q = request.args.get("q", "").strip()
     if len(q) < 2:
         return jsonify([])
 
-    limit = min(int(request.args.get("limit", 8)), 20)
+    limit = min(int(request.args.get("limit", MB_SEARCH_LIMIT)), MB_SEARCH_LIMIT)
+
+    # Artists already in our DB whose name matches the query exactly
+    # (case-insensitive) lead the response; MusicBrainz results follow.
+    exact_rows = (
+        supabase.table("artists")
+        .select("id, name, musicbrainz_id, image_url, genres")
+        .ilike("name", _escape_like(q))
+        .limit(5)
+        .execute()
+    )
+    exact_cards = [_local_row_to_card(r) for r in exact_rows.data or []]
+    exact_mbids = {c["musicbrainz_id"] for c in exact_cards if c["musicbrainz_id"]}
 
     candidates = run_async(mb_search_artists(q, limit=limit))
+    candidates = [c for c in candidates if c["musicbrainz_id"] not in exact_mbids]
 
-    # Enrich top candidates with images (from Spotify via MusicBrainz
-    # relations). Only fetch details for the top 5 to stay within
-    # MusicBrainz rate limits.
+    # Reuse stored image/genres for candidates already in the DB; only hit
+    # MusicBrainz for details on genuinely new artists, since each detail
+    # fetch costs ~1s of rate-limit wait.
+    known: dict[str, dict] = {}
+    mbids = [c["musicbrainz_id"] for c in candidates]
+    if mbids:
+        known_rows = (
+            supabase.table("artists")
+            .select("musicbrainz_id, image_url, genres")
+            .in_("musicbrainz_id", mbids)
+            .execute()
+        )
+        known = {r["musicbrainz_id"]: r for r in known_rows.data or []}
+
     async def _enrich():
-        for c in candidates[:5]:
+        for c in candidates:
+            row = known.get(c["musicbrainz_id"])
+            if row:
+                c["image_url"] = row.get("image_url")
+                c["genres"] = row.get("genres") or c.get("tags", [])
+                continue
             try:
                 details = await mb_get_artist_details(c["musicbrainz_id"])
                 c["image_url"] = await get_artist_image(
@@ -107,7 +151,7 @@ def search_artists_musicbrainz():
     for c in candidates:
         c["source"] = "musicbrainz"
 
-    return jsonify(candidates)
+    return jsonify(exact_cards + candidates)
 
 
 @artists_bp.get("/artists/search")

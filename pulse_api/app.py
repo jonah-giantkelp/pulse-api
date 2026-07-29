@@ -5,6 +5,7 @@ them onto the Flask app, configures logging, and exposes `run()` for the
 `pulse` CLI script (see pyproject.toml).
 """
 
+import gzip
 import logging
 
 from flask import Flask, request
@@ -40,6 +41,27 @@ app.register_blueprint(social_bp)
 app.register_blueprint(email_prefs_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(pages_bp)
+
+
+@app.after_request
+def compress_response(response):
+    """Gzip JSON responses for clients that accept it (URLSession does by
+    default). Event lists run to hundreds of KB uncompressed — on cellular
+    that transfer time keeps the app's pull-to-refresh request in flight
+    long enough for SwiftUI to cancel it."""
+    if (
+        response.status_code < 300
+        and not response.direct_passthrough
+        and response.mimetype == "application/json"
+        and (response.content_length or 0) > 1024
+        and "gzip" not in response.headers.get("Content-Encoding", "")
+        and "gzip" in request.headers.get("Accept-Encoding", "").lower()
+    ):
+        response.set_data(gzip.compress(response.get_data(), compresslevel=6))
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(response.content_length)
+        response.headers.add("Vary", "Accept-Encoding")
+    return response
 
 
 @app.after_request

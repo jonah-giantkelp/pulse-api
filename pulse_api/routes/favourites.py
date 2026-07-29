@@ -4,13 +4,7 @@ from flask import Blueprint, g, jsonify
 
 from pulse_api.auth import require_auth
 from pulse_api.db import supabase
-from pulse_api.routes._helpers import (
-    attach_event_images,
-    attach_lineup,
-    attach_social_posts,
-    attach_ticket_links,
-    enrich_events,
-)
+from pulse_api.routes._helpers import attach_extras
 
 favourites_bp = Blueprint("favourites", __name__)
 
@@ -41,11 +35,7 @@ def list_favourites():
         .execute()
     )
 
-    attach_event_images(events.data)
-    attach_ticket_links(events.data)
-    attach_lineup(events.data)
-    attach_social_posts(events.data)
-    enrich_events(events.data)
+    attach_extras(events.data)
 
     return jsonify(events.data)
 
