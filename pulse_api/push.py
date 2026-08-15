@@ -51,13 +51,17 @@ def _auth_token() -> str:
     return token
 
 
-async def send_push_to_user(user_id: str, title: str, body: str) -> int:
+async def send_push_to_user(
+    user_id: str, title: str, body: str, results: list | None = None
+) -> int:
     """Send an alert push to every registered device for a user.
 
     Returns the number of devices reached. Dead tokens are pruned.
+    Pass a list as `results` to collect per-token APNs responses
+    (used by the /push-test admin endpoint).
     """
     if not configured():
-        logger.info("[PUSH] APNs not configured — skipping push for %s", user_id)
+        logger.warning("[PUSH] APNs not configured — skipping push for %s", user_id)
         return 0
 
     tokens = (
@@ -67,6 +71,7 @@ async def send_push_to_user(user_id: str, title: str, body: str) -> int:
         .execute()
     )
     if not tokens.data:
+        logger.info("[PUSH] No registered devices for %s", user_id)
         return 0
 
     host = "api.sandbox.push.apple.com" if APNS_USE_SANDBOX else "api.push.apple.com"
@@ -88,6 +93,12 @@ async def send_push_to_user(user_id: str, title: str, body: str) -> int:
                     json=payload,
                     headers=headers,
                 )
+                if results is not None:
+                    results.append({
+                        "token": token[:10],
+                        "status": resp.status_code,
+                        "response": resp.text[:200],
+                    })
                 if resp.status_code == 200:
                     sent += 1
                 elif resp.status_code in (400, 410) and "BadDeviceToken" in resp.text:
@@ -101,5 +112,7 @@ async def send_push_to_user(user_id: str, title: str, body: str) -> int:
                         resp.status_code, user_id, resp.text[:120],
                     )
             except Exception as e:
+                if results is not None:
+                    results.append({"token": token[:10], "error": str(e)[:200]})
                 logger.warning("[PUSH] Send failed for %s: %s", user_id, str(e)[:120])
     return sent

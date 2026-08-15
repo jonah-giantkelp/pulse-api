@@ -6,10 +6,25 @@ helpers stay in their own route module.
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from flask import g
 
 from pulse_api.db import supabase
+
+
+def upcoming_cutoff() -> str:
+    """Start of today in London, as an ISO timestamp for date filters.
+
+    Events count as upcoming until the day ends, not until their start
+    time passes — tonight's gig stays on the events page all day.
+    """
+    return (
+        datetime.now(ZoneInfo("Europe/London"))
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .isoformat()
+    )
 
 
 def run_async(coro):

@@ -4,7 +4,7 @@ import logging
 
 from flask import Blueprint, g, jsonify, request
 
-from pulse_api.routes._helpers import run_async
+from pulse_api.routes._helpers import run_async, upcoming_cutoff
 from pulse_api.ai.resolver import (
     resolve_artist,
     resolve_artist_from_mbid,
@@ -305,7 +305,7 @@ def list_my_artists():
             supabase.table("event_artists")
             .select("artist_id, events!inner(date)")
             .in_("artist_id", artist_ids)
-            .gte("events.date", "now()")
+            .gte("events.date", upcoming_cutoff())
             .execute()
         )
         upcoming = {r["artist_id"] for r in rows.data}

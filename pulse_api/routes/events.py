@@ -5,6 +5,7 @@ from flask import Blueprint, g, jsonify, request
 from pulse_api.routes._helpers import (
     apply_user_location_filter,
     attach_extras,
+    upcoming_cutoff,
 )
 from pulse_api.auth import require_auth
 from pulse_api.db import supabase
@@ -50,7 +51,7 @@ def list_my_events():
         supabase.table("event_with_artist")
         .select("*")
         .in_("artist_id", artist_ids)
-        .gte("date", "now()")
+        .gte("date", upcoming_cutoff())
     )
     query = apply_user_location_filter(query, scope, countries_override)
     events = query.order("date", desc=False).execute()
@@ -83,7 +84,7 @@ def list_artist_events(artist_id):
         supabase.table("event_with_artist")
         .select("*")
         .eq("artist_id", artist_id)
-        .gte("date", "now()")
+        .gte("date", upcoming_cutoff())
     )
     query = apply_user_location_filter(query, scope, countries_override)
     events = query.order("date", desc=False).execute()

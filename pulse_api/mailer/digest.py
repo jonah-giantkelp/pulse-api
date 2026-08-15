@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 
 POSTMARK_API_URL = "https://api.postmarkapp.com/email"
 
+# event_artists links created within this window after the user tracks an
+# artist are treated as the initial backfill (the add-artist sync discovering
+# events that already existed), not as new announcements.
+BACKFILL_GRACE = timedelta(hours=1)
+
+
+def _parse_ts(raw: str) -> datetime:
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
 
 def _pick_subject(events: list[dict]) -> str:
     """Build a digest subject that leads with the top tracked artist.
@@ -122,14 +131,16 @@ def _get_new_events_for_user(
     cities = default_cities or []
     countries = default_countries or []
 
-    # Get user's tracked artist IDs
+    # Get user's tracked artist IDs, plus when each was tracked — needed to
+    # tell a genuine lineup announcement apart from a fresh add's backfill.
     subs = (
         supabase.table("user_artists")
-        .select("artist_id")
+        .select("artist_id, created_at")
         .eq("user_id", user_id)
         .execute()
     )
     artist_ids = [s["artist_id"] for s in subs.data]
+    tracked_at = {s["artist_id"]: _parse_ts(s["created_at"]) for s in subs.data}
     if not artist_ids:
         return [], cities
 
@@ -170,13 +181,21 @@ def _get_new_events_for_user(
     # then look the events up by ID.
     new_link_rows = (
         supabase.table("event_artists")
-        .select("event_id")
+        .select("event_id, artist_id, created_at")
         .in_("artist_id", artist_ids)
         .gte("created_at", since_iso)
         .execute()
         .data
     )
-    new_link_event_ids = {r["event_id"] for r in new_link_rows}
+    # Only links for artists the user was already tracking count as
+    # announcements. When a freshly added artist turns up on events that were
+    # already in the DB, that's the initial backfill — not news.
+    new_link_event_ids = {
+        r["event_id"]
+        for r in new_link_rows
+        if r["artist_id"] in tracked_at
+        and _parse_ts(r["created_at"]) > tracked_at[r["artist_id"]] + BACKFILL_GRACE
+    }
     new_link_event_ids -= {e["id"] for e in new_events_rows}
 
     new_announcement_events: list[dict] = []
@@ -206,7 +225,7 @@ def _get_new_events_for_user(
     candidate_ids = [e["id"] for e in candidates]
     links = (
         supabase.table("event_artists")
-        .select("event_id, artist_id, billing, artists(name, image_url)")
+        .select("event_id, artist_id, created_at, billing, artists(name, image_url)")
         .in_("event_id", candidate_ids)
         .in_("artist_id", artist_ids)
         .execute()
@@ -222,7 +241,18 @@ def _get_new_events_for_user(
             **(link.get("artists") or {}),
         })
 
-    all_events = [e for e in candidates if e["id"] in event_artist_map]
+    # Set-2 events the user could already see via an older tracked-artist
+    # link were announced (or backfilled) before this window — a further
+    # artist joining the lineup isn't a new event for them.
+    already_visible = {
+        link["event_id"] for link in links if _parse_ts(link["created_at"]) < since
+    }
+
+    all_events = [
+        e for e in candidates
+        if e["id"] in event_artist_map
+        and not (e["id"] in new_link_event_ids and e["id"] in already_visible)
+    ]
     all_events.sort(key=lambda e: e.get("date", ""))
 
     # Fetch ticket URLs from external IDs (some sources store better URLs there)

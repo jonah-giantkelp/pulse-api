@@ -42,6 +42,50 @@ def trigger_digest():
     return jsonify({"status": "digest complete", **result})
 
 
+@admin_bp.post("/push-test")
+def push_test():
+    """Send a test push to one user's devices and return APNs diagnostics.
+
+    Body: {"email": "<user email>"}. Authenticated via X-API-Key.
+    """
+    api_key = request.headers.get("X-API-Key", "")
+    from pulse_api.config import settings
+
+    if not api_key or api_key != settings.sync_api_key:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    from pulse_api import push
+    from pulse_api.db import supabase
+
+    email = (request.get_json(silent=True) or {}).get("email")
+    if not email:
+        return jsonify({"error": "email required"}), 400
+    rows = (
+        supabase.table("user_email_preferences")
+        .select("user_id")
+        .eq("email", email)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
+        return jsonify({"error": f"no user with email {email}"}), 404
+
+    results: list = []
+    sent = run_async(
+        push.send_push_to_user(
+            rows[0]["user_id"], "PULSE GK", "Test push — hello from /push-test", results
+        )
+    )
+    return jsonify({
+        "configured": push.configured(),
+        "sandbox": push.APNS_USE_SANDBOX,
+        "bundle_id": push.APNS_BUNDLE_ID,
+        "sent": sent,
+        "results": results,
+    })
+
+
 @admin_bp.get("/health")
 def health():
     return jsonify({"status": "ok"})
