@@ -52,13 +52,21 @@ def _auth_token() -> str:
 
 
 async def send_push_to_user(
-    user_id: str, title: str, body: str, results: list | None = None
+    user_id: str,
+    title: str,
+    body: str,
+    results: list | None = None,
+    artist_images: list[str] | None = None,
 ) -> int:
     """Send an alert push to every registered device for a user.
 
     Returns the number of devices reached. Dead tokens are pruned.
     Pass a list as `results` to collect per-token APNs responses
     (used by the /push-test admin endpoint).
+
+    `artist_images` (up to 3 URLs) are carried in the payload for the app's
+    notification service extension, which renders them as a stacked-avatar
+    attachment. Requires mutable-content so the extension gets to run.
     """
     if not configured():
         logger.warning("[PUSH] APNs not configured — skipping push for %s", user_id)
@@ -75,7 +83,12 @@ async def send_push_to_user(
         return 0
 
     host = "api.sandbox.push.apple.com" if APNS_USE_SANDBOX else "api.push.apple.com"
-    payload = {"aps": {"alert": {"title": title, "body": body}, "sound": "default"}}
+    payload: dict = {
+        "aps": {"alert": {"title": title, "body": body}, "sound": "default"}
+    }
+    if artist_images:
+        payload["aps"]["mutable-content"] = 1
+        payload["artist_images"] = artist_images[:3]
     headers = {
         "authorization": f"bearer {_auth_token()}",
         "apns-topic": APNS_BUNDLE_ID,

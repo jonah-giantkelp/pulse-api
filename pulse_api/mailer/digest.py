@@ -28,32 +28,68 @@ def _parse_ts(raw: str) -> datetime:
     return datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
 
-def _pick_subject(events: list[dict]) -> str:
-    """Build a digest subject that leads with the top tracked artist.
+def _ranked_artist_names(events: list[dict]) -> list[str]:
+    """Distinct tracked-artist names across the events, most events first.
 
-    "Top artist" = the artist appearing in the most events in this digest.
-    Tiebreak: artist whose name comes first alphabetically (deterministic
-    so reruns produce the same subject).
+    Tiebreak: alphabetical (deterministic so reruns produce the same copy).
     """
-    n = len(events)
-
-    # Count appearances of each tracked artist across the digest's events.
     counts: dict[str, int] = {}
     for e in events:
         for a in (e.get("artists") or []):
             name = (a.get("name") or "").strip()
             if name:
                 counts[name] = counts.get(name, 0) + 1
+    return [name for name, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
 
-    if not counts:
+
+def _pick_subject(events: list[dict]) -> str:
+    """Build a digest subject that leads with the top tracked artist."""
+    n = len(events)
+    names = _ranked_artist_names(events)
+
+    if not names:
         # No tracked-artist names attached — fall back to a generic count.
         return f"{n} new show{'s' if n != 1 else ''} for your artists"
 
-    top_artist = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-
     if n == 1:
-        return f"{top_artist} just announced a show"
-    return f"{top_artist} + {n - 1} more new date{'s' if n - 1 != 1 else ''}"
+        return f"{names[0]} just announced a show"
+    return f"{names[0]} + {n - 1} more new date{'s' if n - 1 != 1 else ''}"
+
+
+def _ranked_artist_images(events: list[dict]) -> list[str]:
+    """Image URLs for the top-ranked artists (same order as the push copy),
+    skipping artists without an image. Capped at 3 — the app stacks at most
+    three avatars."""
+    images: dict[str, str] = {}
+    for e in events:
+        for a in (e.get("artists") or []):
+            name = (a.get("name") or "").strip()
+            if name and a.get("image_url") and name not in images:
+                images[name] = a["image_url"]
+    return [images[n] for n in _ranked_artist_names(events) if n in images][:3]
+
+
+def _pick_push_copy(events: list[dict]) -> str:
+    """Push notification body led by the announcing artists.
+
+    1 artist  → "X announced a new event near you"
+    2 artists → "X & Y announced new events near you"
+    3+        → "X, Y and n more announced new events near you"
+    """
+    names = _ranked_artist_names(events)
+    n_events = len(events)
+
+    if not names:
+        if n_events == 1:
+            return "A new event was announced near you"
+        return f"{n_events} new events announced near you"
+
+    if len(names) == 1:
+        what = "a new event" if n_events == 1 else "new events"
+        return f"{names[0]} announced {what} near you"
+    if len(names) == 2:
+        return f"{names[0]} & {names[1]} announced new events near you"
+    return f"{names[0]}, {names[1]} and {len(names) - 2} more announced new events near you"
 
 
 async def _send_postmark_email(
@@ -279,6 +315,24 @@ def _get_new_events_for_user(
     return all_events, cities
 
 
+def _record_notifications(user_id: str, events: list[dict]) -> None:
+    """Write in-app notification rows for this batch of new events.
+
+    Idempotent (unique user_id+event_id) and best-effort — the feed missing
+    a row must never block the email/push send.
+    """
+    rows = [{"user_id": user_id, "event_id": e["id"]} for e in events]
+    try:
+        supabase.table("user_notifications").upsert(
+            rows, on_conflict="user_id,event_id", ignore_duplicates=True
+        ).execute()
+    except Exception as e:
+        logger.warning(
+            "[DIGEST] Failed to record notifications for %s: %s",
+            user_id, str(e)[:120],
+        )
+
+
 def _log_digest_sent(user_id: str, event_count: int) -> None:
     """Record that we sent a digest to this user."""
     supabase.table("email_digest_log").insert({
@@ -326,6 +380,8 @@ async def send_daily_digests() -> dict:
                 results["users_processed"] += 1
                 continue
 
+            _record_notifications(user_id, events)
+
             if user.get("digest_enabled") and recipients:
                 # Build a display label from the user's tracked locations
                 city_display = ", ".join(cities_label) if cities_label else None
@@ -346,8 +402,9 @@ async def send_daily_digests() -> dict:
             if user.get("push_enabled"):
                 pushed = await send_push_to_user(
                     user_id,
-                    "PULSE GK",
-                    _pick_subject(events),
+                    "PULSE",
+                    _pick_push_copy(events),
+                    artist_images=_ranked_artist_images(events),
                 )
                 if pushed:
                     logger.info("[DIGEST] Pushed to %d device(s) for %s", pushed, user_id)

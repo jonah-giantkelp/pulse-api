@@ -18,6 +18,7 @@ from pulse_api.routes import (
     email_prefs_bp,
     events_bp,
     favourites_bp,
+    notifications_bp,
     pages_bp,
     social_bp,
 )
@@ -37,6 +38,7 @@ app.register_blueprint(account_bp)
 app.register_blueprint(artists_bp)
 app.register_blueprint(events_bp)
 app.register_blueprint(favourites_bp)
+app.register_blueprint(notifications_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(email_prefs_bp)
 app.register_blueprint(admin_bp)

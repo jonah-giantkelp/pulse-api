@@ -57,7 +57,8 @@ def push_test():
     from pulse_api import push
     from pulse_api.db import supabase
 
-    email = (request.get_json(silent=True) or {}).get("email")
+    payload = request.get_json(silent=True) or {}
+    email = payload.get("email")
     if not email:
         return jsonify({"error": "email required"}), 400
     rows = (
@@ -74,7 +75,8 @@ def push_test():
     results: list = []
     sent = run_async(
         push.send_push_to_user(
-            rows[0]["user_id"], "PULSE GK", "Test push — hello from /push-test", results
+            rows[0]["user_id"], "PULSE", "Test push — hello from /push-test", results,
+            artist_images=payload.get("artist_images"),
         )
     )
     return jsonify({
