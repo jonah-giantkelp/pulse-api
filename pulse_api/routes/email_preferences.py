@@ -4,8 +4,19 @@ from flask import Blueprint, g, jsonify, request
 
 from pulse_api.auth import require_auth
 from pulse_api.db import supabase
+from pulse_api.sync.geo import CITIES, resolve_pref_city
 
 email_prefs_bp = Blueprint("email_preferences", __name__)
+
+
+@email_prefs_bp.get("/cities")
+@require_auth
+def list_cities():
+    """The canonical trackable cities — what the app's picker offers."""
+    return jsonify([
+        {"key": c["key"], "name": c["display"], "country": c["country"]}
+        for c in CITIES
+    ])
 
 
 @email_prefs_bp.get("/me/email-preferences")
@@ -68,7 +79,15 @@ def update_email_preferences():
     if push_enabled is not None:
         update_data["push_enabled"] = push_enabled
     if default_cities is not None:
-        update_data["default_cities"] = default_cities
+        resolved = [resolve_pref_city(c) for c in default_cities]
+        unknown = [c for c, r in zip(default_cities, resolved) if r is None]
+        if unknown:
+            return jsonify({
+                "error": f"unknown cities: {', '.join(unknown)}",
+                "valid_cities": [c["display"] for c in CITIES],
+            }), 400
+        # Dedupe while preserving order (aliases can collapse to one city)
+        update_data["default_cities"] = list(dict.fromkeys(resolved))
     if default_countries is not None:
         update_data["default_countries"] = [c.upper() for c in default_countries]
 
@@ -138,6 +157,13 @@ def add_default_city():
     city = (body.get("city") or "").strip()
     if not city:
         return jsonify({"error": "city is required"}), 400
+    resolved = resolve_pref_city(city)
+    if resolved is None:
+        return jsonify({
+            "error": f"unknown city: {city}",
+            "valid_cities": [c["display"] for c in CITIES],
+        }), 400
+    city = resolved
 
     row = _get_or_init_prefs_row()
     cities = list(row.get("default_cities") or [])
@@ -172,9 +198,13 @@ def remove_default_city(city):
     if not existing.data:
         return jsonify({"error": "email preferences not initialised"}), 404
 
+    # Accept an alias for the removal too ("nyc" removes "New York");
+    # fall back to raw comparison for legacy non-canonical strings.
+    resolved = resolve_pref_city(city)
+    targets = {city.lower()} | ({resolved.lower()} if resolved else set())
     cities = [
         c for c in (existing.data[0].get("default_cities") or [])
-        if c.lower() != city.lower()
+        if c.lower() not in targets
     ]
     result = (
         supabase.table("user_email_preferences")

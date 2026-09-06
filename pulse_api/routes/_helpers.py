@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from flask import g
 
 from pulse_api.db import supabase
+from pulse_api.sync.geo import location_filter_clause
 
 
 def upcoming_cutoff() -> str:
@@ -182,15 +183,10 @@ def apply_user_location_filter(
         return query.in_("country", countries_override)
 
     cities, countries = get_user_location_prefs()
-    if cities and not countries:
-        return query.in_("city", cities)
-    if countries and not cities:
-        return query.in_("country", countries)
-    if cities and countries:
-        city_csv = ",".join(cities)
-        country_csv = ",".join(countries)
-        return query.or_(f"city.in.({city_csv}),country.in.({country_csv})")
-    return query
+    clause = location_filter_clause(cities, countries)
+    if clause is None:
+        return query
+    return query.or_(clause)
 
 
 def enrich_events(events: list[dict]) -> None:

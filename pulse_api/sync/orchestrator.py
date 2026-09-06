@@ -50,6 +50,7 @@ from pulse_api.sync.enrichment import (
     parse_date_hint,
 )
 from pulse_api.sync.fingerprint import make_fingerprint, make_fingerprint_loose
+from pulse_api.sync.geo import propose_geo
 from pulse_api.sync.persistence import (
     link_artist_to_event,
     store_event_images,
@@ -232,6 +233,18 @@ def upsert_events(events: list[dict]):
 
     # Clean up titles and cities before dedup
     ai_clean_titles_and_cities(events)
+
+    # Canonicalise city (alias list) and fix country from raw_data. Runs after
+    # the AI clean so canonical matching sees the cleaned string; before
+    # fingerprinting so dedup keys use canonical names.
+    for e in events:
+        city, country, _ = propose_geo(
+            e.get("source", ""), e.get("raw_data") or {},
+            e.get("city"), e.get("country"),
+        )
+        e["city"] = city
+        if country:
+            e["country"] = country
 
     # Add fingerprints (strict = venue+city+date, loose = city+date)
     for e in events:

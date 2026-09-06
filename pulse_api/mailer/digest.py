@@ -13,6 +13,7 @@ from pulse_api.config import settings
 from pulse_api.db import supabase
 from pulse_api.mailer.template import build_digest_html, build_digest_text
 from pulse_api.push import send_push_to_user
+from pulse_api.sync.geo import location_filter_clause
 
 logger = logging.getLogger(__name__)
 
@@ -183,18 +184,14 @@ def _get_new_events_for_user(
     since_iso = since.isoformat()
 
     def _apply_location_filter(query):
-        """Apply city/country filters if the user has location preferences."""
-        if cities and not countries:
-            query = query.in_("city", cities)
-        elif countries and not cities:
-            query = query.in_("country", countries)
-        elif cities and countries:
-            # PostgREST OR: city in (...) or country in (...)
-            city_csv = ",".join(cities)
-            country_csv = ",".join(countries)
-            query = query.or_(
-                f"city.in.({city_csv}),country.in.({country_csv})"
-            )
+        """Apply city/country filters if the user has location preferences.
+
+        Same clause as routes/_helpers.apply_user_location_filter — canonical
+        cities get a country guard so namesakes (Manchester/US) stay out.
+        """
+        clause = location_filter_clause(cities, countries)
+        if clause is not None:
+            query = query.or_(clause)
         return query
 
     # Narrow by date first (small result set), then intersect with the user's
