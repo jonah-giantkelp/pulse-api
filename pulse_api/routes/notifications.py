@@ -4,7 +4,7 @@ Rows are written by the digest job (one per user+event announcement);
 this blueprint only reads them and flips read_at.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, g, jsonify
 
@@ -13,6 +13,11 @@ from pulse_api.db import supabase
 from pulse_api.routes._helpers import attach_extras
 
 notifications_bp = Blueprint("notifications", __name__)
+
+# Notifications drop off the feed after a week. Rows are kept (the
+# (user, event) uniqueness still stops the digest re-announcing an event);
+# they just stop being served.
+RETENTION = timedelta(days=7)
 
 
 def _clean_ts(raw: str | None) -> str | None:
@@ -33,11 +38,14 @@ def _clean_ts(raw: str | None) -> str | None:
 @notifications_bp.get("/me/notifications")
 @require_auth
 def list_notifications():
-    """The user's notifications, newest first, each with its full event."""
+    """The user's notifications from the last week, newest first, each with
+    its full event."""
+    since = (datetime.now(timezone.utc) - RETENTION).isoformat()
     rows = (
         supabase.table("user_notifications")
         .select("id, event_id, created_at, read_at")
         .eq("user_id", g.user_id)
+        .gte("created_at", since)
         .order("created_at", desc=True)
         .limit(200)
         .execute()
