@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime, timezone
 from functools import wraps
 
 import httpx
@@ -16,9 +17,10 @@ print(f"[AUTH INIT] Supabase key: {settings.supabase_key[:20]}...")
 _supabase = create_client(settings.supabase_url, settings.supabase_key)
 
 # --- Account approval -------------------------------------------------------
-# New accounts are gated until approved (user_approvals table). Cached
-# per-process: approved users for 10 min, pending for 30 s so a flip to
-# approved takes effect quickly.
+# New accounts are approved on first contact and Jonah gets a heads-up email.
+# The user_approvals row still exists so an account can be switched off by
+# flipping approved=false. Cached per-process: approved users for 10 min,
+# blocked for 30 s so a flip takes effect quickly.
 
 APPROVAL_NOTIFY_EMAIL = "jonah@giantkelp.xyz"
 
@@ -29,8 +31,8 @@ _APPROVAL_EXEMPT = {("GET", "/me/access"), ("DELETE", "/me/account")}
 _approval_cache: dict[str, tuple[bool, float]] = {}
 
 
-def _notify_pending_signup(email: str | None) -> None:
-    """Best-effort email so a pending signup doesn't sit unnoticed."""
+def _notify_new_signup(email: str | None) -> None:
+    """Best-effort heads-up that someone new has signed up."""
     if not settings.postmark_server_token:
         return
     try:
@@ -43,11 +45,11 @@ def _notify_pending_signup(email: str | None) -> None:
             json={
                 "From": settings.postmark_from_email,
                 "To": APPROVAL_NOTIFY_EMAIL,
-                "Subject": f"Pulse signup awaiting approval: {email or 'unknown'}",
+                "Subject": f"New Pulse signup: {email or 'unknown'}",
                 "TextBody": (
-                    f"New Pulse account pending approval.\n\nEmail: {email}\n\n"
-                    "Approve it by setting approved=true on their row in the "
-                    "user_approvals table in Supabase."
+                    f"Someone new signed up to Pulse.\n\nEmail: {email}\n\n"
+                    "They're already approved. To switch them off, set "
+                    "approved=false on their user_approvals row in Supabase."
                 ),
                 "MessageStream": "outbound",
             },
@@ -58,8 +60,8 @@ def _notify_pending_signup(email: str | None) -> None:
 
 
 def is_approved(user_id: str, email: str | None = None) -> bool:
-    """Check (and cache) whether a user is approved. Unknown users get a
-    pending row created so they show up for review."""
+    """Check (and cache) whether a user is approved. Unknown users get an
+    approved row created and Jonah is emailed."""
     now = time.time()
     cached = _approval_cache.get(user_id)
     if cached and now < cached[1]:
@@ -75,10 +77,14 @@ def is_approved(user_id: str, email: str | None = None) -> bool:
     if rows:
         approved = bool(rows[0]["approved"])
     else:
-        approved = False
-        _supabase.table("user_approvals").insert({"user_id": user_id}).execute()
-        logger.info("[APPROVAL] New pending account %s (%s)", user_id, email)
-        _notify_pending_signup(email)
+        approved = True
+        _supabase.table("user_approvals").insert({
+            "user_id": user_id,
+            "approved": True,
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+        logger.info("[APPROVAL] New account %s (%s) auto-approved", user_id, email)
+        _notify_new_signup(email)
 
     _approval_cache[user_id] = (approved, now + (600 if approved else 30))
     return approved
