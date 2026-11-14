@@ -15,6 +15,32 @@ No auth required.
 
 ---
 
+## `GET /me/artists/suggestions?seed=<str>&limit=<n>&offset=<n>`
+
+A page of artists already on Pulse that the caller doesn't track yet — shown under the empty search box so users can scroll and TRACK without a lookup (`POST /artists` with the `musicbrainz_id` is the fast existing-artist path, no resolution/sync). Selection is server-side: artists with upcoming gigs first, then the rest, each tier shuffled randomly — results are shuffled by `seed`, so paging with `offset` is stable within a session and a new seed reshuffles. Real recommendations slot in here later without an app change. `limit` defaults to 20, max 50.
+
+**200**:
+
+```json
+{
+  "items": [
+    {
+      "source": "local",
+      "artist_id": "435e4b14-9010-4131-a9c8-8cf8a096ae5e",
+      "musicbrainz_id": "3bcff06f-675a-451f-9075-99e8657047e8",
+      "name": "Four Tet",
+      "image_url": "https://i.scdn.co/image/...",
+      "genres": ["idm", "indietronica"],
+      "has_upcoming": true
+    }
+  ],
+  "total_on_pulse": 226,
+  "has_more": true
+}
+```
+
+---
+
 ## `GET /artists/search?q=<query>&limit=<n>`
 
 Search MusicBrainz for artists. `limit` defaults to 8, max 20. `q` must be at least 2 characters.
@@ -75,9 +101,12 @@ Add an artist and subscribe the current user.
 {
   "artist_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "existing",
-  "message": "Artist already exists, subscribed."
+  "message": "Artist already exists, subscribed.",
+  "tracked": { "artist_id": "550e…", "city": null, "notify": true, "has_upcoming": true, "artists": { "...": "full artists row" } }
 }
 ```
+
+Both responses carry `tracked`: the caller's new subscription in exactly the shape of one `GET /me/artists` item, so clients can insert it locally instead of refetching the whole list. On 201 it is computed after the initial event sync, so `has_upcoming` is accurate.
 
 **201** — New artist created, platforms resolved via AI, user subscribed:
 
@@ -89,13 +118,15 @@ Add an artist and subscribe the current user.
     "ticketmaster": { "status": "resolved", "confidence": "high", "candidates": [...] },
     "ra": { "status": "ambiguous", "confidence": "low", "candidates": [...] }
   },
-  "needs_review": ["ra"]
+  "needs_review": ["ra"],
+  "tracked": { "...": "see above" }
 }
 ```
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `artist_id` | `string` (uuid) | |
+| `tracked` | `object` | The new subscription, `GET /me/artists` item shape |
 | `status` | `string` | `"existing"` or absent (new artists return `matches` instead) |
 | `message` | `string?` | Human-readable, only on existing |
 | `matches` | `object?` | Platform resolution results, only on new artists |

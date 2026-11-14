@@ -1,6 +1,8 @@
-"""Artist endpoints — search, add, resolve, fetch, list-tracked, untrack."""
+"""Artist endpoints — search, suggest, add, resolve, fetch, list-tracked, untrack."""
 
+import hashlib
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Blueprint, g, jsonify, request
 
@@ -80,6 +82,81 @@ def search_artists_local():
         .execute()
     )
     return jsonify([_local_row_to_card(r) for r in rows.data or []])
+
+
+@artists_bp.get("/me/artists/suggestions")
+@require_auth
+def suggest_artists():
+    """A page of artists already on Pulse that this user doesn't track yet.
+
+    The Search tab shows these under the (empty) search box so people can
+    scroll and tap TRACK without a lookup — tracking an existing artist is
+    the fast `POST /artists` path. The app knows nothing about *how* they
+    were chosen, so this is where real recommendations go later. For now:
+    random, shuffled by `seed` so `offset` pages stay consistent within a
+    session and a fresh seed reshuffles. Artists with upcoming gigs lead.
+
+    Query: `seed` (any string), `limit` (default 20, max 50), `offset`.
+    Returns `{items, total_on_pulse, has_more}` — cards share the search
+    shape plus `has_upcoming`.
+    """
+    seed = request.args.get("seed", "")
+    limit = min(max(int(request.args.get("limit", 20)), 1), 50)
+    offset = max(int(request.args.get("offset", 0)), 0)
+    user_id = g.user_id  # flask.g isn't visible from worker threads
+
+    def _artists():
+        return (
+            supabase.table("artists")
+            .select("id, name, musicbrainz_id, image_url, genres")
+            .execute()
+        ).data or []
+
+    def _mine():
+        return (
+            supabase.table("user_artists")
+            .select("artist_id")
+            .eq("user_id", user_id)
+            .execute()
+        ).data or []
+
+    def _upcoming():
+        return (
+            supabase.table("event_artists")
+            .select("artist_id, events!inner(date)")
+            .gte("events.date", upcoming_cutoff())
+            .execute()
+        ).data or []
+
+    # Three independent queries — run them side by side (see attach_extras).
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        rows, mine, upcoming_rows = (
+            f.result() for f in [pool.submit(_artists), pool.submit(_mine), pool.submit(_upcoming)]
+        )
+    tracked = {m["artist_id"] for m in mine}
+    upcoming = {r["artist_id"] for r in upcoming_rows}
+
+    # Active artists (a gig coming up) lead — a suggestion with a reason —
+    # shuffled within each tier so the set still changes between sessions.
+    pool_rows = [r for r in rows if r["id"] not in tracked]
+    pool_rows.sort(
+        key=lambda r: (
+            r["id"] not in upcoming,
+            hashlib.sha1(f"{seed}:{r['id']}".encode()).hexdigest(),
+        )
+    )
+    page = pool_rows[offset : offset + limit]
+
+    items = []
+    for row in page:
+        card = _local_row_to_card(row)
+        card["has_upcoming"] = row["id"] in upcoming
+        items.append(card)
+    return jsonify({
+        "items": items,
+        "total_on_pulse": len(rows),
+        "has_more": offset + limit < len(pool_rows),
+    })
 
 
 @artists_bp.get("/artists/search/musicbrainz")
@@ -167,10 +244,38 @@ def search_artists():
     return search_artists_musicbrainz()
 
 
+def _tracked_entry(user_id: str, artist_id: str) -> dict | None:
+    """The user's subscription row in the same shape as one item of
+    GET /me/artists (artist nested, `has_upcoming` set) — so the app can
+    insert it locally instead of reloading its whole tracked list."""
+    rows = (
+        supabase.table("user_artists")
+        .select("artist_id, city, notify, created_at, artists(*)")
+        .eq("user_id", user_id)
+        .eq("artist_id", artist_id)
+        .execute()
+    ).data
+    if not rows:
+        return None
+    entry = rows[0]
+    upcoming = (
+        supabase.table("event_artists")
+        .select("artist_id, events!inner(date)")
+        .eq("artist_id", artist_id)
+        .gte("events.date", upcoming_cutoff())
+        .limit(1)
+        .execute()
+    ).data
+    entry["has_upcoming"] = bool(upcoming)
+    return entry
+
+
 @artists_bp.post("/artists")
 @require_auth
 def add_artist():
     """Add a new artist and subscribe the current user.
+
+    Responds with `tracked`: the new subscription in GET /me/artists shape.
 
     Accepts either:
     - { "musicbrainz_id": "..." } — preferred, from the search endpoint
@@ -210,6 +315,7 @@ def add_artist():
             "artist_id": artist_id,
             "status": "existing",
             "message": "Artist already exists, subscribed.",
+            "tracked": _tracked_entry(g.user_id, artist_id),
         })
 
     # Resolve new artist
@@ -241,6 +347,8 @@ def add_artist():
     except Exception:
         logger.exception("Initial event sync failed for %s", result["artist_id"])
 
+    # After the sync so has_upcoming reflects the gigs we just pulled in.
+    result["tracked"] = _tracked_entry(g.user_id, result["artist_id"])
     return jsonify(result), 201
 
 
